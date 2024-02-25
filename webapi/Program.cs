@@ -55,7 +55,9 @@ public sealed class Program
             .AddSemanticMemoryServices();
 
         // Add SignalR as the real time relay service
-        builder.Services.AddSignalR();
+        builder.Services
+            .AddSignalR()
+            .AddAzureSignalR(builder.Configuration);
 
         // Add AppInsights telemetry
         builder.Services

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Reflection;
 using CopilotChat.Shared;
@@ -22,7 +23,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Identity.Web;
 using Microsoft.KernelMemory;
 using Microsoft.KernelMemory.Diagnostics;
-
+using Microsoft.AspNetCore.SignalR;
 namespace CopilotChat.WebApi.Extensions;
 
 /// <summary>
@@ -141,6 +142,7 @@ public static class CopilotChatServiceExtensions
     internal static IServiceCollection AddCorsPolicy(this IServiceCollection services, IConfiguration configuration)
     {
         string[] allowedOrigins = configuration.GetSection("AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+        var origions = allowedOrigins.ToList<string>();
         if (allowedOrigins.Length > 0)
         {
             services.AddCors(options =>
@@ -150,7 +152,9 @@ public static class CopilotChatServiceExtensions
                     {
                         policy.WithOrigins(allowedOrigins)
                             .WithMethods("POST", "GET", "PUT", "DELETE", "PATCH")
-                            .AllowAnyHeader();
+                            .AllowAnyHeader()
+                            .AllowCredentials()
+                            .SetIsOriginAllowed(origin => origions.Contains(origin, StringComparer.OrdinalIgnoreCase));
                     });
             });
         }
@@ -329,6 +333,15 @@ public static class CopilotChatServiceExtensions
                     }
                 }
             }
+        }
+    }
+
+    public static void AddAzureSignalR(this ISignalRServerBuilder builder, IConfiguration configuration)
+    {
+        var options = configuration.GetSection("Azure").Get<AzureServiceOptions>();
+        if (!string.IsNullOrEmpty(options?.SignalR?.ConnectionString))
+        {
+            builder.AddAzureSignalR(options?.SignalR?.ConnectionString);
         }
     }
 }
