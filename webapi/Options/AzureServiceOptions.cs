@@ -7,6 +7,10 @@ namespace CopilotChat.WebApi.Options;
 /// <remarks>
 public class AzureServiceOptions
 {
+  public AzureServiceOptions()
+  {
+        this.SignalR = new AzureSignalROptions();
+  }
   /// <summary>
   /// The Azure Service endpoint.
   /// </summary>
@@ -14,7 +18,6 @@ public class AzureServiceOptions
   /// <summary>
   /// The Azure SingnalR Service.
   /// </summary>
-  /// <remarks>
   public class AzureSignalROptions
   {
     /// <summary>

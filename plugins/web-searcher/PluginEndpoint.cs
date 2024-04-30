@@ -53,10 +53,10 @@ public class PluginEndpoint
             NameForHuman = "WebSearcher",
             DescriptionForModel = "Searches the web",
             DescriptionForHuman = "Searches the web",
-            Auth = new PluginAuth()
-            {
-                Type = "user_http"
-            },
+            // Auth = new PluginAuth()
+            // {
+            //     Type = "user_http"
+            // },
             Api = new PluginApi()
             {
                 Type = "openapi",

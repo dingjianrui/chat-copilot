@@ -1,4 +1,4 @@
-import botIcon1 from './assets/bot-icons/bot-icon-1.png';
+import botIcon1 from './assets/bot-icons/bot-icon-6.png';
 
 export const Constants = {
     app: {

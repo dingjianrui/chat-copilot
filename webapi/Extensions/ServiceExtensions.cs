@@ -95,7 +95,7 @@ public static class CopilotChatServiceExtensions
                 continue;
             }
 
-            var pluginManifestUrl = PluginUtils.GetPluginManifestUri(plugin.ManifestDomain);
+            var pluginManifestUrl = PluginUtils.GetPluginManifestUri(plugin.InternalDomain);
             using var request = new HttpRequestMessage(HttpMethod.Get, pluginManifestUrl);
             // Need to set the user agent to avoid 403s from some sites.
             request.Headers.Add("User-Agent", Telemetry.HttpUserAgent);
@@ -171,6 +171,7 @@ public static class CopilotChatServiceExtensions
         IStorageContext<CopilotChatMessage> chatMessageStorageContext;
         IStorageContext<MemorySource> chatMemorySourceStorageContext;
         IStorageContext<ChatParticipant> chatParticipantStorageContext;
+        IStorageContext<HealthReport> healthReportStorageContext;
 
         ChatStoreOptions chatStoreConfig = services.BuildServiceProvider().GetRequiredService<IOptions<ChatStoreOptions>>().Value;
 
@@ -182,6 +183,7 @@ public static class CopilotChatServiceExtensions
                 chatMessageStorageContext = new VolatileContext<CopilotChatMessage>();
                 chatMemorySourceStorageContext = new VolatileContext<MemorySource>();
                 chatParticipantStorageContext = new VolatileContext<ChatParticipant>();
+                healthReportStorageContext = new VolatileContext<HealthReport>();
                 break;
             }
 
@@ -202,6 +204,8 @@ public static class CopilotChatServiceExtensions
                     new FileInfo(Path.Combine(directory, $"{Path.GetFileNameWithoutExtension(fullPath)}_memorysources{Path.GetExtension(fullPath)}")));
                 chatParticipantStorageContext = new FileSystemContext<ChatParticipant>(
                     new FileInfo(Path.Combine(directory, $"{Path.GetFileNameWithoutExtension(fullPath)}_participants{Path.GetExtension(fullPath)}")));
+                healthReportStorageContext = new FileSystemContext<HealthReport>(
+                    new FileInfo(Path.Combine(directory, $"{Path.GetFileNameWithoutExtension(fullPath)}_participants{Path.GetExtension(fullPath)}")));
                 break;
             }
 
@@ -212,6 +216,8 @@ public static class CopilotChatServiceExtensions
                     throw new InvalidOperationException("ChatStore:Cosmos is required when ChatStore:Type is 'Cosmos'");
                 }
 #pragma warning disable CA2000 // Dispose objects before losing scope - objects are singletons for the duration of the process and disposed when the process exits.
+                healthReportStorageContext = new CosmosDbContext<HealthReport>(
+                                    chatStoreConfig.Cosmos.ConnectionString, chatStoreConfig.Cosmos.Database, "healthreports");
                 chatSessionStorageContext = new CosmosDbContext<ChatSession>(
                     chatStoreConfig.Cosmos.ConnectionString, chatStoreConfig.Cosmos.Database, chatStoreConfig.Cosmos.ChatSessionsContainer);
                 chatMessageStorageContext = new CosmosDbContext<CopilotChatMessage>(
@@ -235,6 +241,7 @@ public static class CopilotChatServiceExtensions
         services.AddSingleton<ChatMessageRepository>(new ChatMessageRepository(chatMessageStorageContext));
         services.AddSingleton<ChatMemorySourceRepository>(new ChatMemorySourceRepository(chatMemorySourceStorageContext));
         services.AddSingleton<ChatParticipantRepository>(new ChatParticipantRepository(chatParticipantStorageContext));
+        services.AddSingleton<HealthReportRepository>(new HealthReportRepository(healthReportStorageContext));
 
         return services;
     }
@@ -336,12 +343,12 @@ public static class CopilotChatServiceExtensions
         }
     }
 
-    public static void AddAzureSignalR(this ISignalRServerBuilder builder, IConfiguration configuration)
+    public static void AddSignalRBackplane(this ISignalRServerBuilder builder, IConfiguration configuration)
     {
         var options = configuration.GetSection("Azure").Get<AzureServiceOptions>();
         if (!string.IsNullOrEmpty(options?.SignalR?.ConnectionString))
         {
-            builder.AddAzureSignalR(options?.SignalR?.ConnectionString);
+            builder.AddStackExchangeRedis(options.SignalR.ConnectionString);
         }
     }
 }

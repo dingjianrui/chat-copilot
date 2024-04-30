@@ -37,7 +37,7 @@ const enum SignalRCallbackMethods {
 const setupSignalRConnectionToChatHub = () => {
     const connectionHubUrl = new URL('/messageRelayHub', BackendServiceUrl);
     const signalRConnectionOptions = {
-        skipNegotiation: false,
+        skipNegotiation: true,
         transport: signalR.HttpTransportType.WebSockets,
         logger: signalR.LogLevel.Warning,
     };
@@ -55,7 +55,7 @@ const setupSignalRConnectionToChatHub = () => {
     // larger than the KeepAlive value that is set on the server
     // keepAliveIntervalInMilliseconds default is 15000 and we are using default
     // serverTimeoutInMilliseconds default is 30000 and we are using 60000 set below
-    hubConnection.serverTimeoutInMilliseconds = 60000;
+    hubConnection.serverTimeoutInMilliseconds = 120000;
 
     return hubConnection;
 };

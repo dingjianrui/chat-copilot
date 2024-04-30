@@ -19,7 +19,6 @@ using CopilotChat.WebApi.Storage;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.KernelMemory;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -103,96 +102,9 @@ public class ChatPlugin
         // Clone the prompt options to avoid modifying the original prompt options.
         this._promptOptions = promptOptions.Value.Copy();
 
-        this._semanticMemoryRetriever = new SemanticMemoryRetriever(
-            promptOptions,
-            chatSessionRepository,
-            memoryClient,
-            logger);
+        this._semanticMemoryRetriever = new SemanticMemoryRetriever(promptOptions, chatSessionRepository, memoryClient, logger);
 
         this._contentSafety = contentSafety;
-    }
-
-    /// <summary>
-    /// Extract user intent from the conversation history.
-    /// </summary>
-    /// <param name="kernelArguments">The KernelArguments.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    private async Task<string> ExtractUserIntentAsync(KernelArguments kernelArguments, CancellationToken cancellationToken = default)
-    {
-        var tokenLimit = this._promptOptions.CompletionTokenLimit;
-        var historyTokenBudget =
-            tokenLimit -
-            this._promptOptions.ResponseTokenLimit -
-            TokenUtils.TokenCount(string.Join("\n", new string[]
-                {
-                    this._promptOptions.SystemDescription,
-                    this._promptOptions.SystemIntent,
-                    this._promptOptions.SystemIntentContinuation
-                })
-            );
-
-        // Clone the context to avoid modifying the original context variables.
-        KernelArguments intentExtractionContext = new(kernelArguments);
-        intentExtractionContext["tokenLimit"] = historyTokenBudget.ToString(new NumberFormatInfo());
-        intentExtractionContext["knowledgeCutoff"] = this._promptOptions.KnowledgeCutoffDate;
-
-        var completionFunction = this._kernel.CreateFunctionFromPrompt(
-            this._promptOptions.SystemIntentExtraction,
-            this.CreateIntentCompletionSettings(),
-            functionName: nameof(ChatPlugin),
-            description: "Complete the prompt.");
-
-        var result = await completionFunction.InvokeAsync(
-            this._kernel,
-            intentExtractionContext,
-            cancellationToken
-        );
-
-        // Get token usage from ChatCompletion result and add to context
-        TokenUtils.GetFunctionTokenUsage(result, intentExtractionContext, this._logger, "SystemIntentExtraction");
-
-        return $"User intent: {result}";
-    }
-
-    /// <summary>
-    /// Extract the list of participants from the conversation history.
-    /// Note that only those who have spoken will be included.
-    /// </summary>
-    /// <param name="context">The SKContext.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    private async Task<string> ExtractAudienceAsync(KernelArguments context, CancellationToken cancellationToken = default)
-    {
-        var tokenLimit = this._promptOptions.CompletionTokenLimit;
-        var historyTokenBudget =
-            tokenLimit -
-            this._promptOptions.ResponseTokenLimit -
-            TokenUtils.TokenCount(string.Join("\n", new string[]
-                {
-                    this._promptOptions.SystemAudience,
-                    this._promptOptions.SystemAudienceContinuation,
-                })
-            );
-
-        // Clone the context to avoid modifying the original context variables.
-        KernelArguments audienceExtractionContext = new(context);
-        audienceExtractionContext["tokenLimit"] = historyTokenBudget.ToString(new NumberFormatInfo());
-
-        var completionFunction = this._kernel.CreateFunctionFromPrompt(
-            this._promptOptions.SystemAudienceExtraction,
-            this.CreateIntentCompletionSettings(),
-            functionName: nameof(ChatPlugin),
-            description: "Complete the prompt.");
-
-        var result = await completionFunction.InvokeAsync(
-            this._kernel,
-            audienceExtractionContext,
-            cancellationToken
-        );
-
-        // Get token usage from ChatCompletion result and add to context
-        TokenUtils.GetFunctionTokenUsage(result, context, this._logger, "SystemAudienceExtraction");
-
-        return $"List of participants: {result}";
     }
 
     /// <summary>
@@ -241,7 +153,7 @@ public class ChatPlugin
             }
 
             var promptRole = chatMessage.AuthorRole == CopilotChatMessage.AuthorRoles.Bot ? AuthorRole.System : AuthorRole.User;
-            var tokenCount = chatHistory is not null ? TokenUtils.GetContextMessageTokenCount(promptRole, formattedMessage) : TokenUtils.TokenCount(formattedMessage);
+            int tokenCount = chatHistory is not null ? TokenUtils.GetContextMessageTokenCount(promptRole, formattedMessage) : TokenUtils.TokenCount(formattedMessage);
 
             if (remainingToken - tokenCount >= 0)
             {
@@ -249,8 +161,7 @@ public class ChatPlugin
                 if (chatMessage.AuthorRole == CopilotChatMessage.AuthorRoles.Bot)
                 {
                     // Message doesn't have to be formatted for bot. This helps with asserting a natural language response from the LLM (no date or author preamble).
-                    var botMessage = chatMessage.Content;
-                    allottedChatHistory.AddAssistantMessage(botMessage.Trim());
+                    allottedChatHistory.AddAssistantMessage(chatMessage.Content.Trim());
                 }
                 else
                 {
@@ -276,7 +187,7 @@ public class ChatPlugin
 
     /// <summary>
     /// This is the entry point for getting a chat response. It manages the token limit, saves
-    /// messages to memory, and fill in the necessary context variables for completing the
+    /// messages to memory, and fills in the necessary context variables for completing the
     /// prompt that will be rendered by the template engine.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -330,54 +241,55 @@ public class ChatPlugin
         // Render system instruction components and create the meta-prompt template
         var systemInstructions = await AsyncUtils.SafeInvokeAsync(
             () => this.RenderSystemInstructions(chatId, chatContext, cancellationToken), nameof(RenderSystemInstructions));
-        var chatCompletion = this._kernel.GetRequiredService<IChatCompletionService>();
-        ChatHistory chatHistory = new(systemInstructions);
+        ChatHistory metaPrompt = new(systemInstructions);
 
         // Bypass audience extraction if Auth is disabled
         var audience = string.Empty;
-        if (!PassThroughAuthenticationHandler.IsDefaultUser(userId))
-        {
-            // Get the audience
-            await this.UpdateBotResponseStatusOnClientAsync(chatId, "Extracting audience", cancellationToken);
-            audience = await AsyncUtils.SafeInvokeAsync(
-                () => this.GetAudienceAsync(chatContext, cancellationToken), nameof(GetAudienceAsync));
-            chatHistory.AddSystemMessage(audience);
-        }
+        // if (!PassThroughAuthenticationHandler.IsDefaultUser(userId))
+        // {
+        //     // Get the audience
+        //     await this.UpdateBotResponseStatusOnClientAsync(chatId, "Extracting audience", cancellationToken);
+        //     audience = await AsyncUtils.SafeInvokeAsync(
+        //         () => this.GetAudienceAsync(chatContext, cancellationToken), nameof(GetAudienceAsync));
+        //     metaPrompt.AddSystemMessage(audience);
+        // }
 
         // Extract user intent from the conversation history.
-        await this.UpdateBotResponseStatusOnClientAsync(chatId, "Extracting user intent", cancellationToken);
-        var userIntent = await AsyncUtils.SafeInvokeAsync(
-            () => this.GetUserIntentAsync(chatContext, cancellationToken), nameof(GetUserIntentAsync));
-        chatHistory.AddSystemMessage(userIntent);
+        // await this.UpdateBotResponseStatusOnClientAsync(chatId, "Extracting user intent", cancellationToken);
+        // var userIntent = await AsyncUtils.SafeInvokeAsync(
+        //     () => this.GetUserIntentAsync(chatContext, cancellationToken), nameof(GetUserIntentAsync));
+        // metaPrompt.AddSystemMessage(userIntent);
+        // metaPrompt.AddSystemMessage($"The current user's id is: {userId}.");
 
-        // Calculate the remaining token budget.
-        await this.UpdateBotResponseStatusOnClientAsync(chatId, "Calculating remaining token budget", cancellationToken);
-        var remainingTokenBudget = this.GetChatContextTokenLimit(chatHistory, userMessage.ToFormattedString());
+        // Calculate max amount of tokens to use for memories
+        int maxRequestTokenBudget = this.GetMaxRequestTokenBudget() - 3072;
+        // Calculate tokens used so far: system instructions, audience extraction and user intent
+        int tokensUsed = TokenUtils.GetContextMessagesTokenCount(metaPrompt);
+        int chatMemoryTokenBudget = maxRequestTokenBudget
+            - tokensUsed
+            - TokenUtils.GetContextMessageTokenCount(AuthorRole.User, userMessage.ToFormattedString());
+        chatMemoryTokenBudget = (int)(chatMemoryTokenBudget * this._promptOptions.MemoriesResponseContextWeight);
 
         // Query relevant semantic and document memories
         await this.UpdateBotResponseStatusOnClientAsync(chatId, "Extracting semantic and document memories", cancellationToken);
-        var chatMemoriesTokenLimit = (int)(remainingTokenBudget * this._promptOptions.MemoriesResponseContextWeight);
-        (var memoryText, var citationMap) = await this._semanticMemoryRetriever.QueryMemoriesAsync(userIntent, chatId, chatMemoriesTokenLimit);
-
+        (var memoryText, var citationMap) = await this._semanticMemoryRetriever.QueryMemoriesAsync(userMessage.Content, chatId, chatMemoryTokenBudget);
         if (!string.IsNullOrWhiteSpace(memoryText))
         {
-            chatHistory.AddSystemMessage(memoryText);
+            metaPrompt.AddSystemMessage(memoryText);
+            tokensUsed += TokenUtils.GetContextMessageTokenCount(AuthorRole.System, memoryText);
         }
 
-        // Fill in the chat history with remaining token budget.
-        string allowedChatHistory = string.Empty;
-        var allowedChatHistoryTokenBudget = remainingTokenBudget - TokenUtils.GetContextMessageTokenCount(AuthorRole.System, memoryText);
-
-        // Append previous messages
+        // Add as many chat history messages to meta-prompt as the token budget will allow
         await this.UpdateBotResponseStatusOnClientAsync(chatId, "Extracting chat history", cancellationToken);
-        allowedChatHistory = await this.GetAllowedChatHistoryAsync(chatId, allowedChatHistoryTokenBudget, chatHistory, cancellationToken);
+        string allowedChatHistory = await this.GetAllowedChatHistoryAsync(chatId, maxRequestTokenBudget - tokensUsed, metaPrompt, cancellationToken);
 
-        // Calculate token usage of prompt template
-        chatContext[TokenUtils.GetFunctionKey(this._logger, "SystemMetaPrompt")!] = TokenUtils.GetContextMessagesTokenCount(chatHistory).ToString(CultureInfo.CurrentCulture);
+        // Store token usage of prompt template
+        chatContext[TokenUtils.GetFunctionKey("SystemMetaPrompt")] = TokenUtils.GetContextMessagesTokenCount(metaPrompt).ToString(CultureInfo.CurrentCulture);
 
         // Stream the response to the client
-        var promptView = new BotResponsePrompt(systemInstructions, audience, userIntent, memoryText, allowedChatHistory, chatHistory);
-        return await this.HandleBotResponseAsync(chatId, userId, chatContext, promptView, cancellationToken, citationMap.Values.AsEnumerable());
+        var promptView = new BotResponsePrompt(systemInstructions, audience, userMessage.Content, memoryText, allowedChatHistory, metaPrompt);
+
+        return await this.HandleBotResponseAsync(chatId, userId, chatContext, promptView, citationMap.Values.AsEnumerable(), cancellationToken);
     }
 
     /// <summary>
@@ -397,45 +309,31 @@ public class ChatPlugin
     }
 
     /// <summary>
-    /// Helper function to handle final steps of bot response generation, including streaming to client, generating semantic text memory, calculating final token usages, and saving to chat history.
+    /// Helper function to handle final steps of bot response generation, including streaming to client,
+    /// generating semantic text memory, calculating final token usages, and saving to chat history.
     /// </summary>
     /// <param name="chatId">The chat ID</param>
     /// <param name="userId">The user ID</param>
     /// <param name="chatContext">Chat context.</param>
     /// <param name="promptView">The prompt view.</param>
+    /// <param name="citations">Citation sources.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     private async Task<CopilotChatMessage> HandleBotResponseAsync(
         string chatId,
         string userId,
         KernelArguments chatContext,
         BotResponsePrompt promptView,
-        CancellationToken cancellationToken,
-        IEnumerable<CitationSource>? citations = null,
-        string? responseContent = null)
+        IEnumerable<CitationSource>? citations,
+        CancellationToken cancellationToken)
     {
-        CopilotChatMessage chatMessage;
-        if (responseContent.IsNullOrEmpty())
-        {
-            // Get bot response and stream to client
-            await this.UpdateBotResponseStatusOnClientAsync(chatId, "Generating bot response", cancellationToken);
-            chatMessage = await AsyncUtils.SafeInvokeAsync(
-                () => this.StreamResponseToClientAsync(chatId, userId, promptView, cancellationToken, citations), nameof(StreamResponseToClientAsync));
-        }
-        else
-        {
-            chatMessage = await this.CreateBotMessageOnClient(
-                chatId,
-                userId,
-                JsonSerializer.Serialize(promptView),
-                responseContent!,
-                cancellationToken,
-                citations
-            );
-        }
+        // Get bot response and stream to client
+        await this.UpdateBotResponseStatusOnClientAsync(chatId, "Generating bot response", cancellationToken);
+        CopilotChatMessage chatMessage = await AsyncUtils.SafeInvokeAsync(
+            () => this.StreamResponseToClientAsync(chatId, userId, promptView, cancellationToken, citations), nameof(StreamResponseToClientAsync));
 
         // Save the message into chat history
         await this.UpdateBotResponseStatusOnClientAsync(chatId, "Saving message to chat history", cancellationToken);
-        await this._chatMessageRepository.UpsertAsync(chatMessage!);
+        await this._chatMessageRepository.UpsertAsync(chatMessage);
 
         // Extract semantic chat memory
         await this.UpdateBotResponseStatusOnClientAsync(chatId, "Generating semantic chat memory", cancellationToken);
@@ -450,8 +348,8 @@ public class ChatPlugin
                 cancellationToken), nameof(SemanticChatMemoryExtractor.ExtractSemanticChatMemoryAsync));
 
         // Calculate total token usage for dependency functions and prompt template
-        await this.UpdateBotResponseStatusOnClientAsync(chatId, "Calculating token usage", cancellationToken);
-        chatMessage!.TokenUsage = this.GetTokenUsages(chatContext, chatMessage.Content);
+        await this.UpdateBotResponseStatusOnClientAsync(chatId, "Saving token usage", cancellationToken);
+        chatMessage.TokenUsage = this.GetTokenUsages(chatContext, chatMessage.Content);
 
         // Update the message on client and in chat history with final completion token usage
         await this.UpdateMessageOnClient(chatMessage, cancellationToken);
@@ -461,43 +359,93 @@ public class ChatPlugin
     }
 
     /// <summary>
-    /// Helper function that creates the correct context variables to
-    /// extract the audience from a conversation history.
+    /// Extract the list of participants from the conversation history.
+    /// Note that only those who have spoken will be included.
     /// </summary>
+    /// <param name="context">Kernel context variables.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     private async Task<string> GetAudienceAsync(KernelArguments context, CancellationToken cancellationToken)
     {
+        // Clone the context to avoid modifying the original context variables
         KernelArguments audienceContext = new(context);
-        var audience = await this.ExtractAudienceAsync(audienceContext, cancellationToken);
+        int historyTokenBudget =
+            this._promptOptions.CompletionTokenLimit -
+            this._promptOptions.ResponseTokenLimit -
+            TokenUtils.TokenCount(string.Join("\n\n", new string[]
+                {
+                    this._promptOptions.SystemAudience,
+                    this._promptOptions.SystemAudienceContinuation,
+                })
+            );
 
-        // Copy token usage into original chat context
-        var functionKey = TokenUtils.GetFunctionKey(this._logger, "SystemAudienceExtraction")!;
-        if (audienceContext.TryGetValue(functionKey, out object? tokenUsage))
+        audienceContext["tokenLimit"] = historyTokenBudget.ToString(new NumberFormatInfo());
+
+        var completionFunction = this._kernel.CreateFunctionFromPrompt(
+            this._promptOptions.SystemAudienceExtraction,
+            this.CreateIntentCompletionSettings(),
+            functionName: "SystemAudienceExtraction",
+            description: "Extract audience");
+
+        var result = await completionFunction.InvokeAsync(this._kernel, audienceContext, cancellationToken);
+
+        // Get token usage from ChatCompletion result and add to original context
+        string? tokenUsage = TokenUtils.GetFunctionTokenUsage(result, this._logger);
+        if (tokenUsage is not null)
         {
-            context[functionKey] = tokenUsage;
+            context[TokenUtils.GetFunctionKey("SystemAudienceExtraction")] = tokenUsage;
+        }
+        else
+        {
+            this._logger.LogError("Unable to determine token usage for audienceExtraction");
         }
 
-        return audience;
+        return $"List of participants: {result}";
     }
 
     /// <summary>
-    /// Helper function that creates the correct context variables to
-    /// extract the user intent from the conversation history.
+    /// Extract user intent from the conversation history.
     /// </summary>
+    /// <param name="context">Kernel context.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     private async Task<string> GetUserIntentAsync(KernelArguments context, CancellationToken cancellationToken)
     {
+        // Clone the context to avoid modifying the original context variables
         KernelArguments intentContext = new(context);
-        string userIntent = await this.ExtractUserIntentAsync(intentContext, cancellationToken);
 
-        // Copy token usage into original chat context
-        var functionKey = TokenUtils.GetFunctionKey(this._logger, "SystemIntentExtraction")!;
-        if (intentContext.TryGetValue(functionKey!, out object? tokenUsage))
+        int tokenBudget =
+            this._promptOptions.CompletionTokenLimit -
+            this._promptOptions.ResponseTokenLimit -
+            TokenUtils.TokenCount(string.Join("\n", new string[]
+                {
+                    this._promptOptions.SystemPersona,
+                    this._promptOptions.SystemIntent,
+                    this._promptOptions.SystemIntentContinuation
+                })
+            );
+
+        intentContext["tokenLimit"] = tokenBudget.ToString(new NumberFormatInfo());
+        intentContext["knowledgeCutoff"] = this._promptOptions.KnowledgeCutoffDate;
+
+        var completionFunction = this._kernel.CreateFunctionFromPrompt(
+            this._promptOptions.SystemIntentExtraction,
+            this.CreateIntentCompletionSettings(),
+            functionName: "UserIntentExtraction",
+            description: "Extract user intent");
+
+        var result = await completionFunction.InvokeAsync(this._kernel, intentContext, cancellationToken);
+
+        // Get token usage from ChatCompletion result and add to original context
+        string? tokenUsage = TokenUtils.GetFunctionTokenUsage(result, this._logger);
+        if (tokenUsage is not null)
         {
-            context[functionKey!] = tokenUsage;
+            context[TokenUtils.GetFunctionKey("SystemIntentExtraction")] = tokenUsage;
+        }
+        else
+        {
+            this._logger.LogError("Unable to determine token usage for userIntentExtraction");
         }
 
-        return userIntent;
+        return $"User intent: {result}";
     }
 
     /// <summary>
@@ -628,18 +576,18 @@ public class ChatPlugin
     }
 
     /// <summary>
-    /// Calculate the remaining token budget for the chat response prompt.
-    /// This is the token limit minus the token count of the user intent, audience, and the system commands.
+    /// Calculate the maximum number of tokens that can be sent in a request
     /// </summary>
-    /// <param name="promptTemplate">All current messages to use for chat completion</param>
-    /// <param name="userIntent">The user message.</param>
-    /// <returns>The remaining token limit.</returns>
-    private int GetChatContextTokenLimit(ChatHistory promptTemplate, string userInput = "")
+    private int GetMaxRequestTokenBudget()
     {
-        return this._promptOptions.CompletionTokenLimit
-            - TokenUtils.GetContextMessagesTokenCount(promptTemplate)
-            - TokenUtils.GetContextMessageTokenCount(AuthorRole.User, userInput) // User message has to be included in chat history allowance
-            - this._promptOptions.ResponseTokenLimit;
+        // OpenAI inserts a message under the hood:
+        // "content": "Assistant is a large language model.","role": "system"
+        // This burns just under 20 tokens which need to be accounted for.
+        const int ExtraOpenAiMessageTokens = 20;
+
+        return this._promptOptions.CompletionTokenLimit // Total token limit
+            - ExtraOpenAiMessageTokens
+            - this._promptOptions.ResponseTokenLimit;   // Token count reserved for model to generate a response
     }
 
     /// <summary>

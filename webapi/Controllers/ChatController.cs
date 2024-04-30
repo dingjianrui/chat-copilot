@@ -316,7 +316,7 @@ public class ChatController : ControllerBase, IDisposable
                 // Register the ChatGPT plugin with the kernel.
                 await kernel.ImportPluginFromOpenAIAsync(
                     PluginUtils.SanitizePluginName(plugin.Name),
-                    PluginUtils.GetPluginManifestUri(plugin.ManifestDomain),
+                    PluginUtils.GetPluginManifestUri(plugin.InternalDomain),
                     new OpenAIFunctionExecutionParameters
                     {
                         HttpClient = this._httpClientFactory.CreateClient(),

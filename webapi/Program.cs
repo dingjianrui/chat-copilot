@@ -56,7 +56,7 @@ public sealed class Program
         // Add SignalR as the real time relay service
         builder.Services
             .AddSignalR()
-            .AddAzureSignalR(builder.Configuration);
+            .AddSignalRBackplane(builder.Configuration);
 
         // Add AppInsights telemetry
         builder.Services

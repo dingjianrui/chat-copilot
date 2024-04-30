@@ -23,4 +23,9 @@ public class Plugin
     /// The key of the plugin.
     /// </summary>
     public string Key { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The url of the plugin for internal access.
+    /// </summary>
+    public Uri InternalDomain { get; set; } = new Uri("http://localhost");
 }

@@ -1,0 +1,215 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: herbalife-app  
+  namespace: herbalife
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: herbalife-app
+  template:
+    metadata:
+      labels:
+        app: herbalife-app
+    spec:
+      containers:
+      - name: herbalife-app
+        image: herbalife.azurecr.io/herbalife-webapp:2.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: REACT_APP_BACKEND_URI
+          value: "https://api.jianrui.xyz"
+        - name: WDS_SOCKET_PORT
+          value: "443"
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: herbalife-api  
+  namespace: herbalife
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: herbalife-api
+  template:
+    metadata:
+      labels:
+        app: herbalife-api
+    spec:
+      containers:
+      - name: herbalife-api
+        image: herbalife.azurecr.io/herbalife-webapi:2.6
+        ports:
+        - containerPort: 8080
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: herbalife-plugins
+  namespace: herbalife
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: herbalife-plugins
+  template:
+    metadata:
+      labels:
+        app: herbalife-plugins
+    spec:
+      containers:
+      - name: herbalife-plugins
+        image: herbalife.azurecr.io/herbalife-plugins:1.0
+        ports:
+        - containerPort: 80
+        env:
+        - name: AzureWebJobsSecretStorageType
+          value: "files"
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-stack  
+  namespace: herbalife
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-stack
+  template:
+    metadata:
+      labels:
+        app: redis-stack
+    spec:
+      containers:
+      - name: redis-stack
+        image: redis/redis-stack:latest
+        ports:
+        - containerPort: 6379
+          name: redis
+          containerPort: 8001
+          name: webui
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: herbalife-app
+  namespace: herbalife
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 3000
+  selector:
+    app: herbalife-app
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: herbalife-api
+  namespace: herbalife
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: herbalife-api
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: herbalife-plugins
+  namespace: herbalife
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: herbalife-plugins
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backplane
+  namespace: herbalife
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis-stack
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: herbalife-coplilot
+  namespace: herbalife
+  annotations:
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.jianrui.xyz"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1200"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1200"
+    nginx.ingress.kubernetes.io/affinity	: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode	: "persistent"
+    nginx.ingress.kubernetes.io/session-cookie-max-age	: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-expires	: "172800"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: webapprouting.kubernetes.azure.com
+  tls:
+  - hosts:
+    - app.jianrui.xyz
+    - api.jianrui.xyz
+    secretName: jianrui-xyz-tls
+  rules:
+  - host: app.jianrui.xyz
+    http:
+      paths:
+      - backend:
+          service:
+            name: herbalife-app
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  - host: api.jianrui.xyz
+    http:
+      paths:
+      - backend:
+          service:
+            name: herbalife-api
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  - host: plugins.jianrui.xyz
+    http:
+      paths:
+      - backend:
+          service:
+            name: herbalife-plugins
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
