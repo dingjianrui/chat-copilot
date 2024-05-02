@@ -20,7 +20,7 @@ public class ServiceOptions
     /// <summary>
     /// Configuration Key Vault URI
     /// </summary>
-    [Url]
+    //[Url]
     public string? KeyVault { get; set; }
 
     /// <summary>
