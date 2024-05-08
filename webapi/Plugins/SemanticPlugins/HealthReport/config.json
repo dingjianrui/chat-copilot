@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "description": "个人健康报告查询",
+  "execution_settings": {
+    "default": {
+      "max_tokens": 2048,
+      "temperature": 0.8,
+      "top_p": 0.0,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0
+    },
+    "input_variables": {
+      "name": "userId",
+      "description": "The user's id.",
+      "required": true
+    }
+  }
+}

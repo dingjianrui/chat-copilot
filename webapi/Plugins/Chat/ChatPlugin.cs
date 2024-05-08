@@ -259,10 +259,10 @@ public class ChatPlugin
         // var userIntent = await AsyncUtils.SafeInvokeAsync(
         //     () => this.GetUserIntentAsync(chatContext, cancellationToken), nameof(GetUserIntentAsync));
         // metaPrompt.AddSystemMessage(userIntent);
-        // metaPrompt.AddSystemMessage($"The current user's id is: {userId}.");
+        metaPrompt.AddSystemMessage($"The current user's id is: {userId}.");
 
         // Calculate max amount of tokens to use for memories
-        int maxRequestTokenBudget = this.GetMaxRequestTokenBudget() - 3072;
+        int maxRequestTokenBudget = this.GetMaxRequestTokenBudget() - 4096;
         // Calculate tokens used so far: system instructions, audience extraction and user intent
         int tokensUsed = TokenUtils.GetContextMessagesTokenCount(metaPrompt);
         int chatMemoryTokenBudget = maxRequestTokenBudget
@@ -583,7 +583,7 @@ public class ChatPlugin
         // OpenAI inserts a message under the hood:
         // "content": "Assistant is a large language model.","role": "system"
         // This burns just under 20 tokens which need to be accounted for.
-        const int ExtraOpenAiMessageTokens = 20;
+        const int ExtraOpenAiMessageTokens = 1024;
 
         return this._promptOptions.CompletionTokenLimit // Total token limit
             - ExtraOpenAiMessageTokens

@@ -55,7 +55,7 @@ spec:
       serviceAccountName: workload-identity-sa
       containers:
       - name: herbalife-api
-        image: herbalife.azurecr.io/herbalife-webapi:2.7
+        image: herbalife.azurecr.io/herbalife-webapi:2.9
         ports:
         - containerPort: 8080
 
