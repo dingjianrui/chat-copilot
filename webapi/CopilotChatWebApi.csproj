@@ -79,4 +79,7 @@
     <Folder Include="wwwroot\"/>
     <None Update="localhost.pfx" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Plugins\SemanticPlugins\**" CopyToOutputDirectory="PreserveNewest"/>
+  </ItemGroup>
 </Project>
